@@ -1,0 +1,32 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Dark-first palette — clean, professional (TaxEasy-inspired density) */
+:root {
+  --background: #0a0a0c;
+  --foreground: #e8e8ed;
+  --muted: #71717a;
+  --panel: #111113;
+  --border: #27272a;
+  --accent: #10b981;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: var(--font-heebo), system-ui, sans-serif;
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+/* Subtle grid backdrop */
+.aic-bg-grid {
+  background-image: linear-gradient(rgba(39, 39, 42, 0.35) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(39, 39, 42, 0.35) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
