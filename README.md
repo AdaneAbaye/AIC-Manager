@@ -5,13 +5,20 @@ Includes a **FastAPI** JSON API and a **Next.js** + Tailwind frontend (RTL / Heb
 
 **Disclaimer:** Not financial advice. For research and education only.
 
+## Screenshots
+
+<!-- Add screenshots to docs/screenshots/ and uncomment:
+![Research dashboard](docs/screenshots/dashboard.png)
+![Agent logs](docs/screenshots/agents.png)
+-->
+
 ## Repository layout
 
 | Path | Role |
 |------|------|
 | `src/` | Python package: `config`, `agents`, `tools`, `research_flow`, `security` |
 | `main.py` | FastAPI app (`GET /health`, `POST /api/research`) |
-| `frontend/` | Next.js 14 (App Router) + Tailwind |
+| `frontend/` | Next.js 16 (App Router) + React 19 + Tailwind |
 | `scripts/` | Utilities (e.g. `list_models.py`) |
 | `docs/` | Project documentation |
 
@@ -33,7 +40,7 @@ python -m venv venv
 pip install -r requirements.txt
 ```
 
-Create `.env` in the repo root (see `.env.example` if present, or set at least):
+Copy `.env.example` to `.env` in the repo root and fill in at least:
 
 - `ANTHROPIC_API_KEY` — required for Claude agents  
 - Optional: `TAVILY_API_KEY`, `OPENAI_API_KEY`, etc.
@@ -60,4 +67,4 @@ Open `http://localhost:3000`.
 
 ## License
 
-Add your license here before publishing publicly.
+MIT — see [LICENSE](LICENSE).
