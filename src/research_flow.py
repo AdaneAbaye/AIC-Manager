@@ -747,10 +747,10 @@ def _build_agent_logs(
         return logs
     thesis_short = (thesis[:40] + "...") if len(thesis) > 40 else thesis if thesis else "thesis"
     action_templates = [
-        f"Scanning markets for: {thesis_short}",
-        "Analyzing Scout's picks for financials and sentiment.",
-        "Evaluating volatility and downside risk.",
-        "Allocating budget across approved assets.",
+        f"סורק את השוק לפי התזה: {thesis_short}",
+        "מנתחת את המועמדים של הסקאוט: דוחות כספיים וסנטימנט.",
+        "בודק תנודתיות וסיכון ירידה.",
+        "מחלקת את התקציב בין הנכסים שאושרו.",
     ]
     for i, task_out in enumerate(result.tasks_output):
         raw = getattr(task_out, "raw", "") or str(task_out)
