@@ -2,20 +2,20 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Dark-first palette — clean, professional (TaxEasy-inspired density) */
+/* Light, editorial palette — "committee minutes" look */
 :root {
-  --background: #0a0a0c;
-  --foreground: #e8e8ed;
-  --muted: #71717a;
-  --panel: #111113;
-  --border: #27272a;
-  --accent: #10b981;
+  --background: #ffffff;
+  --foreground: #111827;
+  --muted: #6b7280;
+  --panel: #f8fafc;
+  --border: #e5e7eb;
+  --accent: #1d4ed8;
 }
 
 body {
   color: var(--foreground);
   background: var(--background);
-  font-family: var(--font-heebo), system-ui, sans-serif;
+  font-family: var(--font-sans), system-ui, sans-serif;
 }
 
 @layer utilities {
@@ -24,9 +24,13 @@ body {
   }
 }
 
-/* Subtle grid backdrop */
-.aic-bg-grid {
-  background-image: linear-gradient(rgba(39, 39, 42, 0.35) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(39, 39, 42, 0.35) 1px, transparent 1px);
-  background-size: 48px 48px;
+/* Typing indicator for agents that are still working */
+@keyframes aic-dot {
+  0%, 80%, 100% { opacity: 0.25; }
+  40% { opacity: 1; }
 }
+.aic-typing span {
+  animation: aic-dot 1.2s infinite ease-in-out;
+}
+.aic-typing span:nth-child(2) { animation-delay: 0.15s; }
+.aic-typing span:nth-child(3) { animation-delay: 0.3s; }
