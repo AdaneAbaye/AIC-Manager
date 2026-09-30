@@ -6,7 +6,7 @@ import { ExecutiveSummary } from "@/components/ExecutiveSummary";
 import { ThesisForm, type StrategyMode } from "@/components/ThesisForm";
 import { formatWithCommas } from "@/lib/formatNumbers";
 import { redactSecrets, sanitizeInvestorName, sanitizeThesis } from "@/lib/sanitize";
-import { ApiError, type RunResearchResponse, runResearch } from "@/services/api";
+import { ApiError, getServerInfo, type RunResearchResponse, runResearch } from "@/services/api";
 
 const IDLE: AgentPipelineStatus[] = ["idle", "idle", "idle", "idle"];
 
@@ -37,13 +37,15 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [submittedThesis, setSubmittedThesis] = useState("");
   const [durationSec, setDurationSec] = useState<number | null>(null);
-  const [dateLabel, setDateLabel] = useState("");
+  const [accessKeyRequired, setAccessKeyRequired] = useState(false);
+  const [accessKey, setAccessKey] = useState("");
 
   const abortRef = useRef<AbortController | null>(null);
   const stageTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
-  // Set on the client only, so server and client markup match.
-  useEffect(() => setDateLabel(todayLabel()), []);
+  useEffect(() => {
+    getServerInfo().then((info) => setAccessKeyRequired(info.accessKeyRequired));
+  }, []);
 
   const clearStageTimers = useCallback(() => {
     stageTimersRef.current.forEach(clearTimeout);
@@ -63,9 +65,8 @@ export default function Home() {
   useEffect(() => {
     if (!loading) return;
 
-    setAgentStatuses(["working", "idle", "idle", "idle"]);
-    clearStageTimers();
-
+    // The API returns only when all four agents finish, so this is an estimate: it moves the
+    // "working" marker along but never claims an agent is done before the real results arrive.
     const schedule = (delay: number, next: AgentPipelineStatus[]) => {
       const id = setTimeout(() => {
         setAgentStatuses((prev) => {
@@ -76,9 +77,9 @@ export default function Home() {
       stageTimersRef.current.push(id);
     };
 
-    schedule(2800, ["done", "working", "idle", "idle"]);
-    schedule(5600, ["done", "done", "working", "idle"]);
-    schedule(8400, ["done", "done", "done", "working"]);
+    schedule(15000, ["idle", "working", "idle", "idle"]);
+    schedule(35000, ["idle", "idle", "working", "idle"]);
+    schedule(55000, ["idle", "idle", "idle", "working"]);
 
     return () => clearStageTimers();
   }, [loading, clearStageTimers]);
@@ -131,7 +132,7 @@ export default function Home() {
           portfolio_target: portfolioTarget,
           strategy,
         },
-        { signal }
+        { signal, accessKey: accessKeyRequired ? accessKey : undefined }
       );
       clearStageTimers();
       setResult(data);
@@ -166,7 +167,9 @@ export default function Home() {
           <span className="font-display text-xl font-black">
             AIC<span className="text-blue-700">·</span>Manager
           </span>
-          <span className="text-[12.5px] text-gray-500">ועדת השקעות אוטונומית{dateLabel && ` · ${dateLabel}`}</span>
+          <span className="text-[12.5px] text-gray-500" suppressHydrationWarning>
+            ועדת השקעות אוטונומית · {todayLabel()}
+          </span>
         </div>
 
         {inSession ? (
@@ -231,6 +234,9 @@ export default function Home() {
             onStrategyChange={setStrategy}
             onSubmit={handleSubmit}
             loading={loading}
+            accessKeyRequired={accessKeyRequired}
+            accessKey={accessKey}
+            onAccessKeyChange={setAccessKey}
           />
         )}
 

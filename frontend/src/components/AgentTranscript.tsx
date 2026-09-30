@@ -139,13 +139,14 @@ export function AgentTranscript({ logs, statuses, approved, rejected, hasResult 
 
         if (entry) {
           const [action, outcomeLine, ...rest] = entry.lines;
+          const fullReport = entry.markdown?.trim() || rest.join("\n");
           const outcome = (outcomeLine ?? "").replace(OUTCOME_PREFIX, "");
           return (
             <Bubble key={meta.key} meta={meta} step={i + 1}>
               {action && <div className="text-[13px] text-gray-500">{action}</div>}
               {outcome && <div className="text-[15px] leading-relaxed">{outcome}</div>}
               <Evidence meta={meta} approved={approved} rejected={rejected} />
-              {rest.length > 0 && (
+              {fullReport && (
                 <details className="group text-[14px]">
                   <summary className="cursor-pointer select-none text-[13px] font-medium" style={{ color: meta.color }}>
                     הדוח המלא של {meta.name}
@@ -156,7 +157,7 @@ export function AgentTranscript({ logs, statuses, approved, rejected, hasResult 
                       rehypePlugins={[rehypeSanitize]}
                       components={markdownComponents}
                     >
-                      {rest.join("\n\n")}
+                      {fullReport}
                     </ReactMarkdown>
                   </div>
                 </details>

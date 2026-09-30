@@ -7,22 +7,18 @@ Includes retry logic, timeouts, and ticker sanitization.
 
 import json
 import re
-import sqlite3
-from contextlib import contextmanager
-from pathlib import Path
+from datetime import date
 
 import yfinance as yf
+from crewai.tools import tool
 from duckduckgo_search import DDGS
 from tenacity import (
     retry,
+    retry_if_exception_type,
     stop_after_attempt,
     stop_after_delay,
     wait_exponential,
-    retry_if_exception_type,
 )
-
-from crewai.tools import tool
-from .config import PROJECT_ROOT
 
 # -----------------------------------------------------------------------------
 # Retry & Timeout Configuration
@@ -99,22 +95,6 @@ def _sanitize_tickers(candidates: list[str], asset_type: str, max_results: int) 
 # SQLite Cache Context Manager
 # -----------------------------------------------------------------------------
 
-CACHE_DB = PROJECT_ROOT / ".aic_cache.db"
-
-
-@contextmanager
-def sqlite_cache_connection():
-    """Context manager for SQLite cache—ensures connections are properly closed."""
-    conn = None
-    try:
-        conn = sqlite3.connect(str(CACHE_DB), timeout=10.0)
-        conn.execute("PRAGMA journal_mode=WAL")
-        yield conn
-    finally:
-        if conn:
-            conn.close()
-
-
 # -----------------------------------------------------------------------------
 # DuckDuckGo Search with Retry & Timeout
 # -----------------------------------------------------------------------------
@@ -174,7 +154,7 @@ def market_scanner(
     - "trending stocks today", "top gainers", "low RSI stocks"
 
     Args:
-        query: Research criteria (e.g., "AI stocks 2024", "high yield crypto")
+        query: Research criteria (e.g., "AI stocks", "high yield crypto")
         asset_type: "stocks" or "crypto"
         max_results: Max number of tickers/news items to return (default 5)
 
@@ -185,7 +165,7 @@ def market_scanner(
     results = {"tickers": [], "news": [], "query": query}
 
     try:
-        search_query = f"{query} {asset_type} ticker symbol 2024"
+        search_query = f"{query} {asset_type} ticker symbol {date.today().year}"
         search_output = _ddg_text_search(search_query, max_results=max_results * 2)
 
         results["news"].append({"snippet": search_output[:500]})
@@ -233,8 +213,7 @@ def get_ticker_data(ticker: str) -> str:
     Returns:
         JSON with price, change %, sector, market cap, and recent performance.
     """
-    ticker = ticker.strip().upper()
-    sym = ticker if "-" in ticker or "USD" in ticker.upper() else ticker
+    sym = ticker.strip().upper()
 
     try:
         _, info, hist = _yf_with_retry(sym, "1mo")
@@ -243,25 +222,27 @@ def get_ticker_data(ticker: str) -> str:
         if price is None and not hist.empty:
             price = float(hist["Close"].iloc[-1])
 
-        change_pct = None
+        change_1d_pct = change_1m_pct = None
         if not hist.empty and len(hist) >= 2:
-            prev = hist["Close"].iloc[-2]
-            curr = hist["Close"].iloc[-1]
-            if prev and prev != 0:
-                change_pct = round(((curr - prev) / prev) * 100, 2)
+            first, prev, last = hist["Close"].iloc[0], hist["Close"].iloc[-2], hist["Close"].iloc[-1]
+            if prev:
+                change_1d_pct = round(float((last - prev) / prev * 100), 2)
+            if first:
+                change_1m_pct = round(float((last - first) / first * 100), 2)
 
         return json.dumps({
             "ticker": sym,
             "name": info.get("shortName") or info.get("longName"),
             "price": price,
-            "change_1m_pct": change_pct,
+            "change_1d_pct": change_1d_pct,
+            "change_1m_pct": change_1m_pct,
             "sector": info.get("sector"),
             "industry": info.get("industry"),
             "market_cap": info.get("marketCap"),
             "currency": info.get("currency", "USD"),
         }, indent=2)
     except Exception as e:
-        return json.dumps({"ticker": ticker, "error": str(e)})
+        return json.dumps({"ticker": sym, "error": str(e)})
 
 
 @tool("Search Market News")
@@ -276,7 +257,7 @@ def search_market_news(query: str, max_results: int = 5) -> str:
     Returns:
         JSON with news snippets.
     """
-    search_query = f"{query} market news 2024"
+    search_query = f"{query} market news {date.today().year}"
     try:
         items = _ddg_news_search(search_query, max_results=max_results)
         if items:

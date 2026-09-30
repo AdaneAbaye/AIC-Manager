@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { digitsOnly, formatWithCommas } from "@/lib/formatNumbers";
 import { MAX_THESIS_LENGTH } from "@/lib/sanitize";
 
@@ -19,6 +19,10 @@ type Props = {
   onStrategyChange: (v: StrategyMode) => void;
   onSubmit: (e: React.FormEvent) => void;
   loading: boolean;
+  /** Shown only when the server requires an access code. */
+  accessKeyRequired?: boolean;
+  accessKey?: string;
+  onAccessKeyChange?: (v: string) => void;
 };
 
 const inputClass =
@@ -38,12 +42,13 @@ export function ThesisForm({
   onStrategyChange,
   onSubmit,
   loading,
+  accessKeyRequired = false,
+  accessKey = "",
+  onAccessKeyChange,
 }: Props) {
   const [targetDisplay, setTargetDisplay] = useState(() => formatWithCommas(portfolioTarget));
   const [budgetDisplay, setBudgetDisplay] = useState(() => formatWithCommas(budget));
 
-  useEffect(() => setTargetDisplay(formatWithCommas(portfolioTarget)), [portfolioTarget]);
-  useEffect(() => setBudgetDisplay(formatWithCommas(budget)), [budget]);
 
   function numberInput(raw: string, set: (n: number) => void, setDisplay: (s: string) => void) {
     const d = digitsOnly(raw);
@@ -148,6 +153,23 @@ export function ThesisForm({
           ))}
         </div>
       </fieldset>
+
+      {accessKeyRequired && (
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="access-key" className="text-[13px] text-gray-600">
+            קוד גישה
+          </label>
+          <input
+            id="access-key"
+            type="password"
+            autoComplete="current-password"
+            value={accessKey}
+            onChange={(e) => onAccessKeyChange?.(e.target.value)}
+            className={inputClass}
+            dir="ltr"
+          />
+        </div>
+      )}
 
       <button
         type="submit"

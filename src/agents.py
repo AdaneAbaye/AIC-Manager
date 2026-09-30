@@ -5,17 +5,18 @@ Multi-agent research system: Scout, Analyst, Risk Manager, Architect.
 Concise, professional instructions. Generic investor profile.
 """
 
-from crewai import Agent, LLM
+from crewai import LLM, Agent
 
-from .tools import market_scanner, get_ticker_data, search_market_news
 from .config import (
+    AGENT_MAX_ITER,
+    ANALYST_MODEL,
+    ANTHROPIC_API_KEY,
+    ARCHITECT_MODEL,
+    RISK_MANAGER_MODEL,
     SCOUT_ASSET_COUNT,
     SCOUT_MODEL,
-    ANALYST_MODEL,
-    RISK_MANAGER_MODEL,
-    ARCHITECT_MODEL,
-    ANTHROPIC_API_KEY,
 )
+from .tools import get_ticker_data, market_scanner, search_market_news
 
 
 def _create_llm(model: str, temperature: float = 0.2) -> LLM:
@@ -51,10 +52,10 @@ def create_scout_agent() -> Agent:
     return Agent(
         role="Market Scout",
         goal="Find assets matching the research thesis with strong liquidity and fundamentals",
-        backstory="""You are an expert market researcher. Use search and market data tools to identify investment opportunities.
+        backstory=f"""You are an expert market researcher. Use search and market data tools to identify investment opportunities.
         Cite ticker symbols and provide brief rationale for each pick.
 
-        FUNNEL LOGIC - MANDATORY: Must list the top 10 stocks you evaluated before narrowing down to 4. In your Final Answer, show your filtering process: which assets you evaluated, why each was included or excluded, and your final 4 candidates. Never omit candidates—transparency is required.
+        FUNNEL LOGIC - MANDATORY: Must list the top 10 stocks you evaluated before narrowing down to {SCOUT_ASSET_COUNT}. In your Final Answer, show your filtering process: which assets you evaluated, why each was included or excluded, and your final {SCOUT_ASSET_COUNT} candidates. Never omit candidates—transparency is required.
 
         CONTEXT-AWARE SEARCH: Append context to queries—"stock ticker" for equities, "crypto" for cryptocurrency, "ETF ticker" for ETFs.
 
@@ -69,6 +70,7 @@ def create_scout_agent() -> Agent:
         llm=_scout_llm(),
         verbose=False,
         allow_delegation=False,
+        max_iter=AGENT_MAX_ITER,
     )
 
 
@@ -93,6 +95,7 @@ def create_analyst_agent(
         llm=_reasoning_llm(),
         verbose=False,
         allow_delegation=False,
+        max_iter=AGENT_MAX_ITER,
     )
 
 
@@ -119,6 +122,7 @@ def create_risk_manager_agent(
         llm=_risk_llm(),
         verbose=False,
         allow_delegation=False,
+        max_iter=AGENT_MAX_ITER,
     )
 
 
@@ -156,4 +160,5 @@ def create_portfolio_architect_agent(
         llm=_architect_llm(),
         verbose=False,
         allow_delegation=False,
+        max_iter=AGENT_MAX_ITER,
     )
