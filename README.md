@@ -27,7 +27,9 @@ Includes a **FastAPI** JSON API and a **Next.js** + Tailwind frontend (RTL / Heb
 - **Never commit** `.env`, PEM files, or tokens. If a key was ever committed, rotate it and purge history (e.g. `git filter-repo` or GitHub secret scanning).
 - **CORS:** Defaults to `http://localhost:3000`. Override with `CORS_ALLOW_ORIGINS` (comma-separated) in `.env`.
 - **Inputs:** Thesis and investor name are sanitized server-side (`src/security.py`) and on the client (`frontend/src/lib/sanitize.ts`).
-- **Markdown:** Agent reports use `rehype-sanitize` to reduce XSS risk from model-generated markdown. Secret-like tokens are redacted from every response.
+- **Markdown:** Agent reports use `rehype-sanitize` to reduce XSS risk from model-generated markdown. Secret-like tokens are redacted from every response. Links in reports open in a new tab without a referrer, and images in reports are never loaded.
+- **Separation:** the Anthropic key lives only in the Python API (`.env`). The Next.js frontend never sees it; it only calls `/api/research`. The API listens on `localhost` by default.
+- **Headers:** the frontend sends `X-Frame-Options: DENY`, `nosniff`, a strict referrer policy and no `X-Powered-By`.
 - **Cost protection:** each research run makes several paid Anthropic calls, so a public deployment should set:
   - `AIC_ACCESS_KEY` — the UI then asks for an access code, sent as the `X-Access-Key` header;
   - `AIC_RATE_LIMIT_RUNS` / `AIC_RATE_LIMIT_WINDOW_SECONDS` — runs per IP per window (default 5 per hour);

@@ -18,6 +18,14 @@ type Props = {
 
 /** Markdown tables/code stay LTR inside the RTL bubble. */
 const markdownComponents: Components = {
+  // Model output (and web pages the agents read) is untrusted: links open in a new tab without
+  // passing a referrer, and images are never loaded, so a report cannot ping outside servers.
+  a: ({ href, children }) => (
+    <a href={typeof href === "string" ? href : undefined} target="_blank" rel="noopener noreferrer nofollow" className="text-blue-700 underline">
+      {children}
+    </a>
+  ),
+  img: ({ alt }) => <span className="text-gray-500">{typeof alt === "string" && alt ? `[${alt}]` : ""}</span>,
   table: ({ children }) => (
     <div dir="ltr" className="my-3 w-full overflow-x-auto rounded-lg border border-gray-200">
       <table className="w-full min-w-[320px] border-collapse text-left text-[13px] text-gray-700">{children}</table>
