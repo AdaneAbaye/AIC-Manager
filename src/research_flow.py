@@ -5,18 +5,26 @@ Orchestrates: Scout finds assets -> Analyst reviews -> Risk Manager approves -> 
 Includes allocation validation and 80/20 enforcement.
 """
 
+import logging
 import re
-from typing import Any, Generator, TypedDict
+from typing import Any, TypedDict
 
 from crewai import Crew, Process, Task
 
 from .agents import (
-    create_scout_agent,
     create_analyst_agent,
-    create_risk_manager_agent,
     create_portfolio_architect_agent,
+    create_risk_manager_agent,
+    create_scout_agent,
 )
 from .config import SCOUT_ASSET_COUNT
+
+logger = logging.getLogger(__name__)
+
+
+def _escape_template_braces(text: str) -> str:
+    """CrewAI treats {name} in prompts as a template variable; user text must not contain braces."""
+    return (text or "").replace("{", "(").replace("}", ")")
 
 
 def create_research_crew(
@@ -27,6 +35,8 @@ def create_research_crew(
     is_dca: bool = True,
 ) -> Crew:
     """Build the research crew with tasks chained by context."""
+    thesis = _escape_template_braces(thesis)
+    investor_name = _escape_template_braces(investor_name)
     scout = create_scout_agent()
     analyst = create_analyst_agent(investor_name=investor_name, portfolio_target=portfolio_target)
     risk_manager = create_risk_manager_agent(investor_name=investor_name, portfolio_target=portfolio_target)
@@ -127,25 +137,12 @@ def create_research_crew(
     )
 
 
-# Markdown table row: | ticker | pct | $amount | (pct must be 0-100, in allocation context)
-# Ticker col: letters, symbols, spaces; NOT numbers-only (excludes dates like 2024)
-_TABLE_ROW_RE = re.compile(
-    r"^\s*\|?\s*([A-Za-z\u0590-\u05FF\s\-\.]+?)\s*\|\s*(\d+(?:\.\d+)?)\s*%?\s*\|\s*\$\s*(\d+(?:\.\d+)?)\s*(?:\s*\|.*)?$",
-    re.IGNORECASE,
-)
-# Fallback: ticker (starts with letter) followed by pct% and $amt
-_FALLBACK_ROW_RE = re.compile(
-    r"^\s*([A-Za-z\u0590-\u05FF][A-Za-z\u0590-\u05FF\s\-\.]*?)\s*[:\.]?\s*(\d+(?:\.\d+)?)\s*%\s*[\(\$]?\s*\$?\s*(\d+(?:\.\d+)?)\s*\)?",
-    re.IGNORECASE,
-)
-# Skip: header, separator, total, or lines that are just numbers/dates
+# Skip: header, separator, or total rows
 _HEADER_OR_SEP_RE = re.compile(
-    r"^\s*\|?\s*[-:\s|]+$|^\s*\|?\s*(Ticker|Allocation|Rationale|Amount|%|תאריך|סה[\u05B0-\u05BF]?כ)\s*\|",
+    r"^\s*\|?\s*[-:\s|]+$|^\s*\|?\s*(Ticker|Allocation|Rationale|Amount|%|תאריך|סה[\"״\u05B0-\u05BF]?כ)\s*\|",
     re.IGNORECASE,
 )
-_TOTAL_ROW_RE = re.compile(r"\b(total|סה[\u05B0-\u05BF]?כ|sum)\b", re.IGNORECASE)
-# Lines that mention budget as standalone (e.g. "Budget: $300" or "תקציב: $300") - skip
-_BUDGET_ONLY_RE = re.compile(r"^\s*(budget|תקציב|monthly)\s*[:=]?\s*\$\d+", re.IGNORECASE)
+_TOTAL_ROW_RE = re.compile(r"\b(total|sum)\b|סה[\"״\u05B0-\u05BF]?כ", re.IGNORECASE)
 
 # Table row with rationale: | ticker | pct% | $amt | rationale |
 _TABLE_ROW_WITH_RATIONALE_RE = re.compile(
@@ -162,19 +159,30 @@ _INLINE_ROW_RE = re.compile(
     r"^\s*([A-Za-z\u0590-\u05FF][A-Za-z\u0590-\u05FF\s\-\.]*?)\s*[:\s]+\s*(\d+(?:\.\d+)?)\s*%\s*(?:\(\s*)?\$?\s*([\d,]+(?:\.[\d]+)?)\s*\)?\s*(?:[:\-]\s*(.*))?$",
     re.IGNORECASE,
 )
-# Rejected: multiple patterns for different model formatting
+# Tickers are upper case (AAPL, BRK.B, BTC-USD); matching them case-sensitively keeps
+# ordinary words ("all", "due") from being read as tickers.
+_TICKER = r"[A-Z]{1,5}(?:[.\-][A-Z]{1,4})?"
+_TICKER_FULL_RE = re.compile(rf"^{_TICKER}$")
+_NOT_TICKERS = frozenset({"TICKER", "ASSET", "SYMBOL", "STOCK", "NAME", "NONE", "TOTAL", "CASH", "USD", "N", "A", "I"})
+# "Rejected NVDA: reason" / "REJECT NVDA because ..."
 _REJECTED_PATTERN_RE = re.compile(
-    r"(?:rejected|reject)\s+([A-Z]{2,5}(?:-[A-Z]{2,4})?)\s*(?:due to|because|:|\-)\s*(.+?)(?=\n|$)",
-    re.IGNORECASE,
+    rf"(?i:\breject(?:ed)?)\s*:?\s+\**({_TICKER})\**\s*(?:(?i:due to|because)|[:\-–—])\s*(.+?)(?=\n|$)"
 )
-_REJECTED_LINE_RE = re.compile(
-    r"^\s*[-*•]?\s*([A-Z]{2,5}(?:-[A-Z]{2,4})?)\s*[:\-–—]\s*(.+?)\s*$",
-    re.IGNORECASE,
-)
-# Rejected in sentence: "NVDA was rejected due to..."
+# "NVDA was rejected due to ..."
 _REJECTED_SENTENCE_RE = re.compile(
-    r"([A-Z]{2,5}(?:-[A-Z]{2,4})?)\s+(?:was\s+)?rejected\s+(?:due to|because|for)\s+(.+?)(?=[.;\n]|$)",
-    re.IGNORECASE,
+    rf"\b({_TICKER})\**\s+(?i:(?:was\s+)?rejected\s+(?:due to|because|for))\s+(.+?)(?=[.;\n]|$)"
+)
+# "NVDA: REJECTED - reason"
+_TICKER_THEN_REJECTED_RE = re.compile(
+    rf"^[^\w]*\**({_TICKER})\**\s*[:\-–—]\s*\**(?i:rejected)\**\s*[:\-–—]?\s*(.+)$"
+)
+# List item inside a REJECTED section: "- **NVDA**: high volatility"
+_REJECTED_LINE_RE = re.compile(
+    rf"^[^\w]*(?:\d+[.)]\s*)?\**({_TICKER})\**\s*(?:\([^)]*\))?\s*[:\-–—]\s*(.+?)\s*$"
+)
+_REJECTED_SECTION_RE = re.compile(r"^[^\w]*(?:(?i:rejected|rejections)|נדחו|נכסים\s+שנדחו|דחויים)")
+_OTHER_SECTION_RE = re.compile(
+    r"^#{1,6}\s|^\*\*[^*]+\*\*\s*:?\s*$|^[^\w]*(?:(?i:approved|summary|allocation|final)|אושרו|מאושרים|סיכום)"
 )
 
 _TICKER_HEADER_WORDS = frozenset(
@@ -294,6 +302,8 @@ def _parse_allocation_from_pipe_cells(line: str, seen_tickers: set[str]) -> dict
     if len(cells) < 3:
         return None
 
+    if _TOTAL_ROW_RE.search(cells[0]):
+        return None
     ticker = _normalize_ticker_from_cell(cells[0])
     if not ticker or ticker.isdigit():
         return None
@@ -372,8 +382,9 @@ def _try_parse_allocation_line(line_stripped: str, seen_tickers: set[str]) -> di
                 continue
             seen_tickers.add(ticker_key)
             return {"ticker": ticker, "pct": pct, "amount": amt, "rationale": (rationale or "—")}
-    m = _INLINE_ROW_RE.match(line_stripped)
-    if m and not _TOTAL_ROW_RE.search(line_stripped):
+    unbulleted = re.sub(r"^\s*(?:[-*•]|\d+[.)])\s+", "", line_stripped)
+    m = _INLINE_ROW_RE.match(unbulleted)
+    if m and not _TOTAL_ROW_RE.search(unbulleted):
         ticker = _normalize_ticker_from_cell(m.group(1))
         pct = float(m.group(2))
         amt = float(_strip_cell_markdown(m.group(3)).replace(",", ""))
@@ -409,148 +420,97 @@ def _clean_text_for_parsing(text: str) -> str:
     return t
 
 
+def _clean_reason(text: str) -> str:
+    return re.sub(r"\*+", "", text or "").strip(" -–—:|")[:200]
+
+
+def parse_rejections(text: str) -> list[dict]:
+    """
+    Rejected assets from an agent's output (normally the Risk Manager's).
+
+    Reads list items and table rows inside a REJECTED section, plus explicit
+    "Rejected NVDA: ..." / "NVDA was rejected because ..." sentences anywhere.
+    """
+    text = _clean_text_for_parsing(text or "")
+    found: list[dict] = []
+    seen: set[str] = set()
+
+    def add(ticker: str, reason: str) -> None:
+        ticker = ticker.strip()
+        if ticker in _NOT_TICKERS or not _TICKER_FULL_RE.match(ticker) or ticker in seen:
+            return
+        seen.add(ticker)
+        found.append({"ticker": ticker, "reason": _clean_reason(reason) or "—"})
+
+    for pattern in (_REJECTED_PATTERN_RE, _REJECTED_SENTENCE_RE):
+        for m in pattern.finditer(text):
+            add(m.group(1), m.group(2))
+
+    in_section = False
+    for line in text.split("\n"):
+        ls = line.strip()
+        if not ls:
+            continue
+        m = _TICKER_THEN_REJECTED_RE.match(ls)
+        if m:
+            add(m.group(1), m.group(2))
+            continue
+        if _REJECTED_SECTION_RE.match(ls):
+            in_section = True
+            continue
+        if in_section and _OTHER_SECTION_RE.match(ls):
+            in_section = False
+            continue
+        if not in_section:
+            continue
+        if ls.count("|") >= 2:
+            if _is_md_table_separator_row(ls):
+                continue
+            cells = _split_md_table_cells(ls)
+            if len(cells) >= 2:
+                add(cells[0], " · ".join(c for c in cells[1:] if c))
+            continue
+        m = _REJECTED_LINE_RE.match(ls)
+        if m:
+            add(m.group(1), m.group(2))
+    return found
+
+
 def parse_recommendations_for_ui(text: str) -> dict:
     """
-    Parse Architect output into structured data for dashboard UI.
-    Robust: cleans text, finds table regardless of surrounding content, handles varied REJECTED formatting.
-    Returns: {
-        "allocations": [{"ticker", "pct", "amount", "rationale"}],
-        "rejected": [{"ticker", "reason"}],
-        "raw_text": str (fallback when parsing fails)
-    }
+    Parse the Architect's output for the UI.
+
+    Returns {"allocations": [{"ticker", "pct", "amount", "rationale"}],
+             "rejected": [{"ticker", "reason"}], "raw_text": str}.
+    Total rows are skipped; rejections come only from explicit REJECTED
+    sections or sentences (see parse_rejections).
     """
     result = {"allocations": [], "rejected": [], "raw_text": text}
-    try:
-        text = _clean_text_for_parsing(text or "")
-    except Exception:
-        return result
+    text = _clean_text_for_parsing(text or "")
     if not text:
         return result
 
     seen_tickers: set[str] = set()
-    in_rejected = False
-    seen_rejected: set[str] = set()
-
     table_lines = _gather_candidate_table_lines(text)
-    # Prefer all pipe-shaped lines (flexible); fall back to full document
-    lines_to_parse = table_lines if table_lines else text.split("\n")
-
-    # First pass: scan entire text for REJECTED mentions (flexible)
-    for rej_match in _REJECTED_PATTERN_RE.finditer(text):
-        t = rej_match.group(1).strip()
-        r = rej_match.group(2).strip()[:200]
-        if t and t not in seen_rejected:
-            seen_rejected.add(t)
-            result["rejected"].append({"ticker": t, "reason": r})
-    for rej_match in _REJECTED_SENTENCE_RE.finditer(text):
-        t = rej_match.group(1).strip()
-        r = rej_match.group(2).strip()[:200]
-        if t and t not in seen_rejected:
-            seen_rejected.add(t)
-            result["rejected"].append({"ticker": t, "reason": r})
-
-    for line in lines_to_parse:
-        line_stripped = line.strip() if isinstance(line, str) else ""
-        if not line_stripped:
-            continue
-
-        # Detect REJECTED section header (variants)
-        if re.search(r"^\s*(REJECTED|Rejected|דחוי|נדחו)", line_stripped, re.IGNORECASE):
-            in_rejected = True
-            continue
-        if in_rejected and re.search(r"^\s*(APPROVED|Approved|מאושר|Summary|סיכום|Allocation|---)", line_stripped, re.IGNORECASE):
-            in_rejected = False
-
-        # Parse allocation rows (table or inline)
-        alloc = _try_parse_allocation_line(line_stripped, seen_tickers)
-        if alloc:
-            result["allocations"].append(alloc)
-            continue
-
-        # Parse rejected list: "- NVDA: high volatility" (only if in section or not yet found)
-        if in_rejected or not result["rejected"]:
-            rej_line = _REJECTED_LINE_RE.match(line_stripped)
-            if rej_line and len(rej_line.group(1)) >= 2:
-                t = rej_line.group(1).strip()
-                if t not in seen_rejected:
-                    seen_rejected.add(t)
-                    result["rejected"].append({"ticker": t, "reason": rej_line.group(2).strip()[:200]})
-
-    # If no allocations yet, retry with full text line-by-line (inline / odd formatting)
-    if not result["allocations"]:
-        for line in text.split("\n"):
-            line_stripped = line.strip()
-            if not line_stripped:
+    for lines in (table_lines, text.split("\n")):
+        for line in lines:
+            ls = line.strip()
+            if not ls or _REJECTED_SECTION_RE.match(ls):
                 continue
-            alloc = _try_parse_allocation_line(line_stripped, seen_tickers)
+            alloc = _try_parse_allocation_line(ls, seen_tickers)
             if alloc:
                 result["allocations"].append(alloc)
+        if result["allocations"]:
+            break
 
-    # Parse rejected list format from full text (in case table block missed it)
-    if not result["rejected"] or not table_lines:
-        in_rej = False
-        for line in text.split("\n"):
-            ls = line.strip()
-            if not ls:
-                continue
-            if re.search(r"^\s*(REJECTED|Rejected|דחוי|נדחו)", ls, re.IGNORECASE):
-                in_rej = True
-                continue
-            if in_rej and re.search(r"^\s*(APPROVED|Approved|מאושר|Summary|Allocation|---)", ls, re.IGNORECASE):
-                in_rej = False
-            if in_rej:
-                rej_m = _REJECTED_LINE_RE.match(ls)
-                if rej_m and len(rej_m.group(1)) >= 2:
-                    t = rej_m.group(1).strip()
-                    if t not in seen_rejected:
-                        seen_rejected.add(t)
-                        result["rejected"].append({"ticker": t, "reason": rej_m.group(2).strip()[:200]})
-
+    approved = {a["ticker"] for a in result["allocations"]}
+    result["rejected"] = [r for r in parse_rejections(text) if r["ticker"] not in approved]
     return result
 
 
 def _parse_allocations(text: str) -> list[tuple[str, float, float]]:
-    """
-    Extract (ticker, pct, amount) ONLY from allocation table rows.
-    - Only percentages associated with tickers (not dates, budget totals, or summary text)
-    - Ignores lines with budget numbers like $300 when not in a table row
-    - Cash Reserve counted only once (deduplicated by ticker_key)
-    """
-    rows: list[tuple[str, float, float]] = []
-    seen_tickers: set[str] = set()
-
-    for line in text.split("\n"):
-        line = line.strip()
-        if not line or _HEADER_OR_SEP_RE.match(line) or _TOTAL_ROW_RE.search(line):
-            continue
-        if _BUDGET_ONLY_RE.match(line):
-            continue
-
-        m = _TABLE_ROW_RE.match(line)
-        if not m:
-            m = _FALLBACK_ROW_RE.match(line)
-        if not m:
-            continue
-
-        ticker = m.group(1).strip()
-        pct = float(m.group(2))
-        amt = float(m.group(3))
-
-        if pct < 0 or pct > 100:
-            continue
-        if not ticker or ticker.isdigit():
-            continue
-
-        ticker_key = re.sub(r"\s+", "", ticker.lower())
-        if "cash" in ticker_key and "reserve" in ticker_key:
-            ticker_key = "cashreserve"
-        if ticker_key in seen_tickers:
-            continue
-        seen_tickers.add(ticker_key)
-
-        rows.append((ticker, pct, amt))
-
-    return rows
+    """(ticker, pct, amount) rows, using the same tolerant parser as the UI."""
+    return [(a["ticker"], a["pct"], a["amount"]) for a in parse_recommendations_for_ui(text)["allocations"]]
 
 
 def _validate_and_enforce_allocation(
@@ -672,6 +632,7 @@ class RejectedAssetDict(TypedDict):
 class AgentLogEntryDict(TypedDict):
     agent: str
     lines: list[str]
+    markdown: str
 
 
 class ResearchSessionResultDict(TypedDict):
@@ -691,24 +652,17 @@ def _sanitize_error(msg: str) -> str:
 
 
 def _format_llm_error(exc: Exception) -> str:
-    """Convert LLM/API errors to user-friendly messages. Never exposes API keys."""
+    """User-facing message for an LLM/API failure. Details are logged, not shown."""
     raw = _sanitize_error(str(exc))
+    logger.error("Research session failed: %s", raw)
     msg = raw.lower()
-    if "404" in msg or "not found" in msg:
-        return (
-            "**Model not found (404).** Try `claude-3-haiku-20240307` or `claude-haiku-4-5-20251001` "
-            "in config.py (works with low balance)."
-        )
-    if "401" in msg or "unauthorized" in msg or "invalid api key" in msg:
-        return (
-            "**Invalid API key.** Check that ANTHROPIC_API_KEY in your `.env` file "
-            "is correct and has not expired. Get a key at https://console.anthropic.com/"
-        )
-    if "429" in msg or "rate limit" in msg:
-        return "**Rate limit exceeded.** Please wait a moment and try again."
-    if "anthropic" in msg or "api" in msg or "llm" in msg:
-        return f"**LLM error:** {raw}"
-    return f"**Research failed:** {raw}"
+    if "401" in msg or "unauthorized" in msg or "invalid api key" in msg or "authentication" in msg:
+        return "The AI service rejected the API key. Check ANTHROPIC_API_KEY on the server."
+    if "429" in msg or "rate limit" in msg or "overloaded" in msg:
+        return "The AI service is busy right now. Please try again in a minute."
+    if "credit" in msg or "billing" in msg or "quota" in msg:
+        return "The AI account is out of credit. Please contact the site owner."
+    return "The research could not be completed. Please try again."
 
 
 _AGENT_NAMES = ["Scout", "Analyst", "Risk Manager", "Architect"]
@@ -747,10 +701,10 @@ def _build_agent_logs(
         return logs
     thesis_short = (thesis[:40] + "...") if len(thesis) > 40 else thesis if thesis else "thesis"
     action_templates = [
-        f"Scanning markets for: {thesis_short}",
-        "Analyzing Scout's picks for financials and sentiment.",
-        "Evaluating volatility and downside risk.",
-        "Allocating budget across approved assets.",
+        f"סורק את השוק לפי התזה: {thesis_short}",
+        "מנתחת את המועמדים של הסקאוט: דוחות כספיים וסנטימנט.",
+        "בודק תנודתיות וסיכון ירידה.",
+        "מחלקת את התקציב בין הנכסים שאושרו.",
     ]
     for i, task_out in enumerate(result.tasks_output):
         raw = getattr(task_out, "raw", "") or str(task_out)
@@ -766,7 +720,7 @@ def _build_agent_logs(
             lines.append(extracted[j])
         if max_detail_lines is not None:
             lines = lines[:max_detail_lines]
-        logs.append({"agent": agent, "lines": lines})
+        logs.append({"agent": agent, "lines": lines, "markdown": _sanitize_error(raw.strip())})
     return logs
 
 
@@ -804,13 +758,9 @@ def run_research_session(
         is_dca=is_dca,
     )
     try:
-        result = crew.kickoff(inputs={
-            "monthly_budget": monthly_budget,
-            "thesis": thesis,
-            "investor_name": investor_name,
-            "portfolio_target": portfolio_target,
-            "is_dca": is_dca,
-        })
+        # Values are already in the prompts; passing inputs would make CrewAI treat any
+        # "{...}" in the user's text as a template variable.
+        result = crew.kickoff()
     except Exception as e:
         raise ResearchSessionError(_format_llm_error(e)) from e
 
@@ -822,10 +772,17 @@ def run_research_session(
         output = str(result.output)
     else:
         output = str(result)
+    parsed = parse_recommendations_for_ui(output)
     output = _validate_and_enforce_allocation(output, monthly_budget, thesis, is_dca=is_dca)
     output = _append_goal_summary(output, thesis)
 
-    parsed = parse_recommendations_for_ui(output)
+    # The REJECTED section is written by the Risk Manager (task 3), not the Architect.
+    tasks_output = getattr(result, "tasks_output", None) or []
+    risk_text = getattr(tasks_output[2], "raw", "") if len(tasks_output) > 2 else ""
+    approved_tickers = {a["ticker"] for a in parsed.get("allocations", [])}
+    rejected_raw = [r for r in parse_rejections(risk_text) if r["ticker"] not in approved_tickers]
+    seen = {r["ticker"] for r in rejected_raw}
+    rejected_raw += [r for r in parsed.get("rejected", []) if r["ticker"] not in seen]
     approved: list[ApprovedAssetDict] = [
         {
             "ticker": a["ticker"],
@@ -835,10 +792,7 @@ def run_research_session(
         }
         for a in parsed.get("allocations", [])
     ]
-    rejected: list[RejectedAssetDict] = [
-        {"ticker": r["ticker"], "reason": r["reason"]}
-        for r in parsed.get("rejected", [])
-    ]
+    rejected: list[RejectedAssetDict] = [{"ticker": r["ticker"], "reason": r["reason"]} for r in rejected_raw]
 
     return {
         "approved_assets": approved,
@@ -846,39 +800,3 @@ def run_research_session(
         "agent_logs": agent_logs,
         "raw_report": output,
     }
-
-
-def run_research_session_streaming(
-    thesis: str,
-    monthly_budget: float,
-    investor_name: str = "Investor",
-    portfolio_target: float = 1_000_000,
-    is_dca: bool = True,
-) -> Generator[tuple[str, str], None, None]:
-    """Run research session and yield (agent_name, output) as each task completes."""
-    from .config import ANTHROPIC_API_KEY
-
-    if not ANTHROPIC_API_KEY:
-        raise ResearchSessionError(
-            "**ANTHROPIC_API_KEY** not set. Add it to your `.env` file and restart the app."
-        )
-    crew = create_research_crew(
-        thesis, monthly_budget,
-        investor_name=investor_name,
-        portfolio_target=portfolio_target,
-        is_dca=is_dca,
-    )
-    try:
-        result = crew.kickoff(inputs={
-            "monthly_budget": monthly_budget,
-            "thesis": thesis,
-            "investor_name": investor_name,
-            "portfolio_target": portfolio_target,
-            "is_dca": is_dca,
-        })
-    except Exception as e:
-        raise ResearchSessionError(_format_llm_error(e)) from e
-    output = str(result.raw) if hasattr(result, "raw") else str(result)
-    output = _validate_and_enforce_allocation(output, monthly_budget, thesis, is_dca=is_dca)
-    output = _append_goal_summary(output, thesis)
-    yield ("Committee", output)

@@ -25,7 +25,10 @@ export type RejectedAsset = {
 
 export type AgentLogEntry = {
   agent: string;
+  /** Opening line, outcome, then detail lines (capped). */
   lines: string[];
+  /** The agent's full report as markdown. */
+  markdown?: string;
 };
 
 export type RunResearchResponse = {
@@ -59,7 +62,22 @@ export class ApiError extends Error {
 
 export type RunResearchOptions = {
   signal?: AbortSignal;
+  /** Sent as X-Access-Key when the server requires an access code. */
+  accessKey?: string;
 };
+
+export type ServerInfo = { accessKeyRequired: boolean };
+
+/** Ask the backend whether it requires an access code. Assumes not, if it can't be reached. */
+export async function getServerInfo(): Promise<ServerInfo> {
+  try {
+    const res = await fetch(`${getApiBaseUrl()}/health`);
+    const json = (await res.json()) as { access_key_required?: boolean };
+    return { accessKeyRequired: Boolean(json.access_key_required) };
+  } catch {
+    return { accessKeyRequired: false };
+  }
+}
 
 export async function runResearch(
   body: RunResearchRequest,
@@ -68,7 +86,10 @@ export async function runResearch(
   const url = `${getApiBaseUrl()}/api/research`;
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(options?.accessKey ? { "X-Access-Key": options.accessKey } : {}),
+    },
     body: JSON.stringify({
       research_thesis: body.research_thesis.trim(),
       budget: body.budget,
@@ -82,9 +103,10 @@ export async function runResearch(
   if (!res.ok) {
     let detail: string | undefined;
     try {
-      const errJson = (await res.json()) as { detail?: string | string[] };
+      const errJson = (await res.json()) as { detail?: string | Array<string | { msg?: string }> };
       if (typeof errJson.detail === "string") detail = errJson.detail;
-      else if (Array.isArray(errJson.detail)) detail = errJson.detail.map(String).join(" ");
+      else if (Array.isArray(errJson.detail))
+        detail = errJson.detail.map((d) => (typeof d === "string" ? d : d.msg ?? "")).join(" ");
     } catch {
       detail = await res.text();
     }

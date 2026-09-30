@@ -4,9 +4,10 @@ Standalone diagnostic script to list all available Anthropic models for the conf
 Uses the same environment settings as the main app (load_dotenv, .env at repo root).
 """
 
-from pathlib import Path
 import os
 import sys
+from pathlib import Path
+
 from dotenv import load_dotenv
 
 # Load .env from project root (repo root, one level above scripts/)
@@ -14,7 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 sys.path.insert(0, str(ROOT))
 
-from src.security import redact_secrets
+from src.security import redact_secrets  # noqa: E402
 
 try:
     from anthropic import Anthropic
