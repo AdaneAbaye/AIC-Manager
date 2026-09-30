@@ -1,7 +1,7 @@
 # Runtime dependencies for the AIC-Manager API (Python 3.10+).
 # Generated from the imports in main.py, src/ and scripts/.
 fastapi==0.136.0
-uvicorn==0.41.0
+uvicorn==0.54.0
 pydantic==2.11.10
 python-dotenv==1.1.1
 crewai==1.9.3
